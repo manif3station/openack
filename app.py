@@ -35,8 +35,10 @@ def load_valid_people() -> set[str]:
 
 
 def sanitize_agent_name(agent: str) -> str:
-    safe = "".join(ch for ch in agent.strip().lower() if ch.isalnum() or ch in {"-", "_"})
+    safe = agent.strip().lower()
     if not safe:
+        raise ValueError(f"Invalid agent name: {agent!r}")
+    if any(not (ch.isalnum() or ch in {"-", "_"}) for ch in safe):
         raise ValueError(f"Invalid agent name: {agent!r}")
     return safe
 

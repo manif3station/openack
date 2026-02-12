@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from app import OPENAPI_SPEC, handle_send_message, load_valid_people
 
 
@@ -78,6 +80,16 @@ def test_reject_unknown_recipient(tmp_path, monkeypatch):
         assert False, "Expected ValueError"
     except ValueError as err:
         assert "Recipient(s) not in directory: b" in str(err)
+
+
+def test_reject_names_with_disallowed_characters(tmp_path, monkeypatch):
+    people_file = tmp_path / "people.yml"
+    people_file.write_text("people:\n- ab\n- c\n", encoding="utf-8")
+
+    monkeypatch.setattr("app.PEOPLE_FILE", people_file)
+
+    with pytest.raises(ValueError, match="Invalid agent name"):
+        handle_send_message("a!b", ["c"], "hello", [])
 
 
 def test_howto_is_openapi_spec():
