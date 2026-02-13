@@ -3,7 +3,11 @@ FROM --platform=$BUILDPLATFORM python:latest
 
 WORKDIR /app
 
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
 COPY app.py /app/app.py
+COPY dashboard.py /app/dashboard.py
 
 ENV OPENACK_MESSAGES_ROOT=/messages \
     OPENACK_PEOPLE_FILE=/var/lib/openack/people.yml \

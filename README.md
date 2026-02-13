@@ -25,6 +25,30 @@ people:
 YAML
 ```
 
+If you want to mirror the default service naming from this repository, use `openack` and `openack-admin` and expose the dashboard on host port `18081`:
+
+```yaml
+services:
+  openack:
+    image: michaelpc/openack:latest
+    volumes:
+      - ./openack/messages:/messages
+      - ./openack/config:/var/lib/openack
+
+  openack-admin:
+    extends: openack
+    ports:
+      - 18081:8081
+    command:
+      - streamlit
+      - run
+      - dashboard.py
+      - --server.port
+      - "8081"
+      - --server.address
+      - 0.0.0.0
+```
+
 Example compose update:
 
 ```yaml
@@ -49,6 +73,8 @@ services:
     volumes:
       - ./openack/messages/agent-b:/messages/agent-b
 ```
+
+Then open the dashboard at `http://localhost:18081`.
 
 ## Message file layout
 
