@@ -1,1 +1,5 @@
-# No external dependencies required.
+streamlit>=1.36.0
+PyYAML>=6.0
+streamlit-quill>=0.0.3
+markdownify>=0.13.1
+pytest>=8.0
