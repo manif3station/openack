@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-import cgi
 import json
 import os
+from collections import defaultdict
+from email.parser import BytesParser
+from email.policy import default
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -130,6 +132,36 @@ def handle_send_message(sender: str, recipients: list[str], message: str, files:
     }
 
 
+def parse_multipart_form_data(content_type: str, body: bytes) -> tuple[str, list[str], str, list[tuple[str, bytes]]]:
+    message = BytesParser(policy=default).parsebytes(
+        b"Content-Type: " + content_type.encode("utf-8") + b"\r\nMIME-Version: 1.0\r\n\r\n" + body
+    )
+
+    if not message.is_multipart():
+        raise ValueError("Invalid multipart form payload")
+
+    fields: dict[str, list[str]] = defaultdict(list)
+    files: list[tuple[str, bytes]] = []
+
+    for part in message.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        if not name:
+            continue
+
+        filename = part.get_filename()
+        payload = part.get_payload(decode=True) or b""
+        if filename:
+            files.append((filename, payload))
+        else:
+            fields[name].append(part.get_content())
+
+    sender = fields.get("from", [""])[0]
+    recipients = fields.get("to", [])
+    text_message = fields.get("message", [""])[0]
+
+    return sender, recipients, text_message, files
+
+
 OPENAPI_SPEC = {
     "openapi": "3.0.3",
     "info": {
@@ -255,32 +287,14 @@ class MessageHandler(BaseHTTPRequestHandler):
             return
 
         content_type = self.headers.get("Content-Type", "")
+        length = int(self.headers.get("Content-Length", "0"))
+        request_body = self.rfile.read(length)
 
         try:
             if content_type.startswith("multipart/form-data"):
-                form = cgi.FieldStorage(
-                    fp=self.rfile,
-                    headers=self.headers,
-                    environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type},
-                )
-                sender = form.getvalue("from", "")
-                message = form.getvalue("message", "")
-                to_fields = form["to"] if "to" in form else []
-                if isinstance(to_fields, list):
-                    recipients = [item.value for item in to_fields]
-                elif to_fields:
-                    recipients = [to_fields.value]
-                else:
-                    recipients = []
-
-                file_fields = form["files"] if "files" in form else []
-                if not isinstance(file_fields, list):
-                    file_fields = [file_fields] if file_fields else []
-                files = [(item.filename, item.file.read()) for item in file_fields]
+                sender, recipients, message, files = parse_multipart_form_data(content_type, request_body)
             else:
-                length = int(self.headers.get("Content-Length", "0"))
-                body = self.rfile.read(length).decode("utf-8")
-                parsed = parse_qs(body)
+                parsed = parse_qs(request_body.decode("utf-8"))
                 sender = parsed.get("from", [""])[0]
                 message = parsed.get("message", [""])[0]
                 recipients = parsed.get("to", [])
@@ -297,7 +311,7 @@ class MessageHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.OK, result)
 
 
-def run_server(host: str = "0.0.0.0", port: int = 8000) -> None:
+def run_server(host: str = "0.0.0.0", port: int = 8080) -> None:
     server = ThreadingHTTPServer((host, port), MessageHandler)
     print(f"Server listening on http://{host}:{port}")
     server.serve_forever()
