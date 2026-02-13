@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app import OPENAPI_SPEC, handle_send_message, load_valid_people
+from app import OPENAPI_SPEC, handle_send_message, load_valid_people, parse_multipart_form_data
 
 
 def test_load_valid_people_lowercases_names(tmp_path, monkeypatch):
@@ -98,3 +98,32 @@ def test_howto_is_openapi_spec():
     assert "/howto" in OPENAPI_SPEC["paths"]
     assert "/directory" in OPENAPI_SPEC["paths"]
     assert OPENAPI_SPEC["paths"]["/messages"]["post"]["requestBody"]["required"] is True
+
+
+def test_parse_multipart_form_data_extracts_fields_and_files():
+    boundary = "----OpenAckBoundary"
+    payload = (
+        f"--{boundary}\r\n"
+        "Content-Disposition: form-data; name=\"from\"\r\n\r\n"
+        "michael\r\n"
+        f"--{boundary}\r\n"
+        "Content-Disposition: form-data; name=\"to\"\r\n\r\n"
+        "lobsty\r\n"
+        f"--{boundary}\r\n"
+        "Content-Disposition: form-data; name=\"message\"\r\n\r\n"
+        "hello from lobsty\r\n"
+        f"--{boundary}\r\n"
+        "Content-Disposition: form-data; name=\"files\"; filename=\"note.txt\"\r\n"
+        "Content-Type: text/plain\r\n\r\n"
+        "attachment body\r\n"
+        f"--{boundary}--\r\n"
+    ).encode("utf-8")
+
+    content_type = f"multipart/form-data; boundary={boundary}"
+
+    sender, recipients, message, files = parse_multipart_form_data(content_type, payload)
+
+    assert sender == "michael"
+    assert recipients == ["lobsty"]
+    assert message == "hello from lobsty"
+    assert files == [("note.txt", b"attachment body")]
