@@ -318,4 +318,6 @@ def run_server(host: str = "0.0.0.0", port: int = 8080) -> None:
 
 
 if __name__ == "__main__":
-    run_server()
+    host = os.environ.get("OPENACK_HOST", "0.0.0.0")
+    port = int(os.environ.get("OPENACK_PORT", "8080"))
+    run_server(host=host, port=port)
