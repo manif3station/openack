@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
-import re
 import tempfile
 import zipfile
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -87,24 +87,50 @@ def parse_message_text(text: str) -> MessageDetails:
     header_block = text.split(HEADER_MARKER, maxsplit=1)[1] if HEADER_MARKER in text else text
     body_block, footer_block = header_block.split(FOOTER_MARKER, maxsplit=1) if FOOTER_MARKER in header_block else (header_block, "")
 
-    body_lines: list[str] = []
-    for line in body_block.strip("\n").splitlines():
+    body_lines = body_block.strip("\n").splitlines()
+    body_start = 0
+
+    for index, line in enumerate(body_lines):
         stripped = line.strip()
+        if not stripped:
+            body_start = index + 1
+            break
         if stripped.startswith("from:"):
             sender = stripped.split(":", maxsplit=1)[1].strip()
         elif stripped.startswith("to:"):
             recipient = stripped.split(":", maxsplit=1)[1].strip()
         elif stripped.startswith("sent_at:"):
             sent_at = stripped.split(":", maxsplit=1)[1].strip()
-        elif not re.match(r"^(from|to|sent_at):", stripped):
-            body_lines.append(line)
+        else:
+            body_start = index
+            break
+    else:
+        body_start = len(body_lines)
+
+    body = "\n".join(body_lines[body_start:]).strip()
+    body = decode_escaped_newlines_if_json_string(body)
 
     for line in footer_block.splitlines():
         stripped = line.strip()
         if stripped.startswith("-"):
             attachments.append(stripped[1:].strip())
 
-    return MessageDetails(sent_at=sent_at, sender=sender, recipient=recipient, body="\n".join(body_lines).strip(), attachments=attachments)
+    return MessageDetails(sent_at=sent_at, sender=sender, recipient=recipient, body=body, attachments=attachments)
+
+
+def decode_escaped_newlines_if_json_string(body: str) -> str:
+    if len(body) < 2 or body[0] != '"' or body[-1] != '"':
+        return body
+
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        return body
+
+    if not isinstance(parsed, str):
+        return body
+
+    return parsed
 
 
 def _message_preview(text: str, limit: int = 80) -> str:
