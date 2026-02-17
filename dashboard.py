@@ -5,6 +5,7 @@ import tempfile
 import zipfile
 import json
 import base64
+import time
 from urllib.parse import quote
 from urllib.request import urlopen
 from dataclasses import dataclass
@@ -258,12 +259,27 @@ def fetch_new_messages_from_api() -> tuple[list[MessageRecord], dict[str, Messag
     return records, detail_cache
 
 
-def scan_messages() -> tuple[list[MessageRecord], dict[str, MessageDetails]]:
+def scan_messages(force_refresh_fetch: bool = False) -> tuple[list[MessageRecord], dict[str, MessageDetails]]:
     records: list[MessageRecord] = []
     detail_cache: dict[str, MessageDetails] = {}
 
     if FETCH_API_BASE:
-        fetched_records, fetched_details = fetch_new_messages_from_api()
+        cache_key = "fetch_api_scan_cache"
+        cache_ttl_seconds = 2.0
+        cached_fetch = st.session_state.get(cache_key)
+        cache_is_fresh = bool(cached_fetch and (time.monotonic() - cached_fetch["timestamp"]) <= cache_ttl_seconds)
+
+        if force_refresh_fetch or not cache_is_fresh:
+            fetched_records, fetched_details = fetch_new_messages_from_api()
+            st.session_state[cache_key] = {
+                "timestamp": time.monotonic(),
+                "records": fetched_records,
+                "details": fetched_details,
+            }
+        else:
+            fetched_records = cached_fetch["records"]
+            fetched_details = cached_fetch["details"]
+
         records.extend(fetched_records)
         detail_cache.update(fetched_details)
     elif MESSAGES_ROOT.exists():
