@@ -12,6 +12,7 @@ from urllib.parse import quote
 from urllib.request import urlopen
 from dataclasses import dataclass
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
 import streamlit as st
@@ -389,6 +390,89 @@ def delete_selected_messages(selected_ids: set[str]) -> int:
     return deleted
 
 
+def _resolve_attachment_paths(msg_path: Path, attachments: list[str]) -> list[Path]:
+    resolved: list[Path] = []
+    for attachment in attachments:
+        attachment_name = Path(attachment).name
+        candidates = [msg_path.parent / attachment_name, Path(attachment)]
+
+        if "/messages/" in attachment:
+            _, _, suffix = attachment.partition("/messages/")
+            candidates.append(MESSAGES_ROOT / suffix)
+
+        for candidate in candidates:
+            if candidate.exists() and candidate not in resolved:
+                resolved.append(candidate)
+                break
+
+    return resolved
+
+
+def mark_message_as_read(message_id: str) -> bool:
+    if not message_id.startswith("inbox::"):
+        return False
+
+    msg_path = Path(message_id.split("::", 1)[1])
+    if not msg_path.exists():
+        return False
+
+    details = parse_message_text(msg_path.read_text(encoding="utf-8"))
+    attachments = _resolve_attachment_paths(msg_path, details.attachments)
+
+    done_dir = msg_path.parent.parent / "done"
+    done_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = done_dir / f"{msg_path.stem}.zip"
+
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(msg_path, arcname=msg_path.name)
+        for attachment in attachments:
+            archive.write(attachment, arcname=attachment.name)
+
+    msg_path.unlink(missing_ok=True)
+    for attachment in attachments:
+        attachment.unlink(missing_ok=True)
+
+    return True
+
+
+def mark_selected_messages_as_read(selected_ids: set[str]) -> int:
+    marked = 0
+    for message_id in selected_ids:
+        if mark_message_as_read(message_id):
+            marked += 1
+    return marked
+
+
+def build_reply_body(details: MessageDetails) -> str:
+    formatted_date = _parse_iso_dt(details.sent_at) or details.sent_at
+    return (
+        "\n\n"
+        "---\n"
+        f"From: {details.sender}\n"
+        f"To: {details.recipient}\n"
+        f"Date: {formatted_date}\n\n"
+        f"{details.body}"
+    )
+
+
+def _plain_text_to_quill_html(text: str) -> str:
+    paragraphs = []
+    for line in text.splitlines():
+        if not line.strip():
+            paragraphs.append("<p><br></p>")
+            continue
+        paragraphs.append(f"<p>{escape(line)}</p>")
+    return "".join(paragraphs) if paragraphs else "<p><br></p>"
+
+
+def prime_reply_draft(details: MessageDetails) -> None:
+    st.session_state.compose_to = details.sender
+    st.session_state.compose_from = details.recipient
+    st.session_state.compose_html = _plain_text_to_quill_html(build_reply_body(details))
+    st.session_state.compose_editor_seed = st.session_state.get("compose_editor_seed", 0) + 1
+    st.session_state.active_tab = "New message"
+
+
 def selected_ids_visible_in_current_view(selected_ids: set[str], visible_records: list[MessageRecord]) -> set[str]:
     visible_ids = {row.message_id for row in visible_records}
     return selected_ids & visible_ids
@@ -565,13 +649,20 @@ def inbox_tab(records: list[MessageRecord], detail_cache: dict[str, MessageDetai
         cols[5].write(row.preview)
         cols[6].write(str(row.attachments_count))
 
-        ops = st.columns([1, 1, 4])
+        ops = st.columns([1.2, 1.2, 1.6, 3.4])
         if ops[0].button("Reply", key=f"reply-{row.message_id}"):
-            st.session_state.compose_to = row.sender
-            st.session_state.compose_from = row.recipient
-            st.session_state.jump_to_new = True
+            details = detail_cache.get(row.message_id)
+            if details:
+                prime_reply_draft(details)
+                st.rerun()
         if ops[1].button("Open", key=f"open-{row.message_id}"):
             st.session_state.open_message_id = row.message_id
+        if ops[2].button("Mark as read", key=f"mark-read-{row.message_id}", disabled=not row.is_new):
+            if mark_message_as_read(row.message_id):
+                st.session_state.pop(f"sel-{row.message_id}", None)
+                selected_ids.discard(row.message_id)
+                st.success("Message marked as read.")
+                st.rerun()
 
         if selected:
             selected_ids.add(row.message_id)
@@ -581,6 +672,14 @@ def inbox_tab(records: list[MessageRecord], detail_cache: dict[str, MessageDetai
         st.divider()
 
     selected_ids = st.session_state.get("selected_ids", set())
+    if selected_ids and st.button("Mark Selected as Read"):
+        marked = mark_selected_messages_as_read(set(selected_ids))
+        for message_id in list(selected_ids):
+            st.session_state.pop(f"sel-{message_id}", None)
+        st.session_state["selected_ids"] = set()
+        st.success(f"Marked {marked} message(s) as read.")
+        st.rerun()
+
     if selected_ids and st.button("Delete Selected", type="primary"):
         deleted = delete_selected_messages(set(selected_ids))
         for message_id in list(selected_ids):
@@ -630,9 +729,8 @@ def inbox_tab(records: list[MessageRecord], detail_cache: dict[str, MessageDetai
             st.download_button(f"Download {filename}", data=data, file_name=filename, key=f"dl-{open_id}-{filename}")
 
     if st.button("Reply from viewer", key="reply-viewer"):
-        st.session_state.compose_to = details.sender
-        st.session_state.compose_from = details.recipient
-        st.session_state.jump_to_new = True
+        prime_reply_draft(details)
+        st.rerun()
 
 
 def new_message_tab(people: list[str]) -> None:
@@ -749,17 +847,20 @@ def main() -> None:
         fresh_records, fresh_detail_cache = scan_messages()
         inbox_tab(fresh_records, fresh_detail_cache, people)
 
-    tabs = st.tabs(["Inbox", "New message", "Admin"])
-    with tabs[0]:
-        inbox_fragment()
-    with tabs[1]:
-        new_message_tab(people)
-    with tabs[2]:
-        admin_tab(people, records)
+    tab_names = ["Inbox", "New message", "Admin"]
+    st.session_state.setdefault("active_tab", "Inbox")
+    if st.session_state.active_tab not in tab_names:
+        st.session_state.active_tab = "Inbox"
 
-    if st.session_state.get("jump_to_new"):
-        st.info("Reply pre-filled. Open the New message tab to send.")
-        st.session_state.jump_to_new = False
+    active_tab = st.radio("Navigation", options=tab_names, horizontal=True, index=tab_names.index(st.session_state.active_tab), label_visibility="collapsed")
+    st.session_state.active_tab = active_tab
+
+    if active_tab == "Inbox":
+        inbox_fragment()
+    elif active_tab == "New message":
+        new_message_tab(people)
+    else:
+        admin_tab(people, records)
 
 
 if __name__ == "__main__":
