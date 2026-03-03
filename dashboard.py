@@ -57,6 +57,25 @@ def apply_ui_theme(theme_mode: str) -> None:
         <style>
           [data-testid="stToolbar"] { display: none !important; }
           button[title="Deploy this app"] { display: none !important; }
+
+          /* Prevent mobile auto-zoom on form focus (iOS/Safari behavior). */
+          input, textarea, select,
+          [contenteditable="true"],
+          .stTextInput input,
+          .stTextArea textarea,
+          .stSelectbox div[data-baseweb="select"] input,
+          .ql-editor {
+            font-size: 16px !important;
+          }
+
+          /* Keep app usable when Streamlit shows stale/disconnected overlays. */
+          .stale-element,
+          [data-testid="stale-element"],
+          [data-testid="stale-element-overlay"],
+          [data-testid="stAppStaleElement"] {
+            display: none !important;
+            pointer-events: none !important;
+          }
         </style>
         """,
         unsafe_allow_html=True,
@@ -834,9 +853,9 @@ def main() -> None:
         "Inbox refresh every (seconds)",
         min_value=0,
         max_value=120,
-        value=15,
+        value=0,
         step=5,
-        help="Refreshes only the Inbox fragment over Streamlit's websocket without rerunning the entire page.",
+        help="Set to 0 to disable background refresh and avoid UI interruptions while typing.",
     )
 
     people = ensure_admin_in_people()
