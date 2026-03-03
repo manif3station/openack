@@ -311,6 +311,59 @@ def test_load_agent_id_targets_returns_empty_for_missing_file(tmp_path, monkeypa
 
     assert dashboard.load_agent_id_targets() == []
 
+
+
+def test_normalize_message_body_converts_unquoted_escaped_newlines():
+    body = "Line 1\\nLine 2\\nLine 3"
+
+    assert dashboard.normalize_message_body(body) == "Line 1\nLine 2\nLine 3"
+
+
+def test_scan_messages_decodes_fetch_message_escaped_newlines(tmp_path, monkeypatch):
+    messages_root = tmp_path / "messages"
+    messages_root.mkdir()
+
+    ids_file = tmp_path / "agent_ids.yml"
+    ids_file.write_text("id:\n  AGENT1: bob\n", encoding="utf-8")
+
+    class DummyResponse:
+        def __init__(self, payload: str):
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return self._payload.encode("utf-8")
+
+    payload = [
+        {
+            "from": "poly",
+            "to": "michael",
+            "sent_at": "2026-03-03T00:51:49Z",
+            "message": "UNDERSTOOD\\nSLEEP WELL",
+            "attachments": [],
+        }
+    ]
+
+    def fake_urlopen(_url, timeout=0):
+        assert timeout == 5
+        return DummyResponse(json.dumps(payload))
+
+    monkeypatch.setattr(dashboard, "FETCH_API_BASE", "http://fetch:9090")
+    monkeypatch.setattr(dashboard, "AGENT_IDS_FILE", ids_file)
+    monkeypatch.setattr(dashboard, "MESSAGES_ROOT", messages_root)
+    monkeypatch.setattr(dashboard, "urlopen", fake_urlopen)
+
+    records, details = dashboard.scan_messages(force_refresh_fetch=True)
+
+    fetch_ids = [record.message_id for record in records if record.message_id.startswith("fetch::")]
+    assert len(fetch_ids) == 1
+    assert details[fetch_ids[0]].body == "UNDERSTOOD\nSLEEP WELL"
+
 def test_require_login_does_not_allow_query_param_bypass(monkeypatch):
     class StopCalled(Exception):
         pass

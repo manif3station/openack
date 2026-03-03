@@ -115,7 +115,7 @@ def parse_message_text(text: str) -> MessageDetails:
         body_start = len(body_lines)
 
     body = "\n".join(body_lines[body_start:]).strip()
-    body = decode_escaped_newlines_if_json_string(body)
+    body = normalize_message_body(body)
 
     for line in footer_block.splitlines():
         stripped = line.strip()
@@ -138,6 +138,17 @@ def decode_escaped_newlines_if_json_string(body: str) -> str:
         return body
 
     return parsed
+
+
+def normalize_message_body(body: str) -> str:
+    normalized = decode_escaped_newlines_if_json_string(body)
+
+    # Some fetch providers send escaped newlines without JSON quoting.
+    # Convert those to actual line breaks for correct dashboard rendering.
+    if "\\n" in normalized and "\n" not in normalized:
+        normalized = normalized.replace("\\n", "\n")
+
+    return normalized
 
 
 def _message_preview(text: str, limit: int = 80) -> str:
@@ -237,7 +248,7 @@ def fetch_new_messages_from_api() -> tuple[list[MessageRecord], dict[str, Messag
                 sent_at=str(item.get("sent_at", "")),
                 sender=str(item.get("from", "")),
                 recipient=str(item.get("to", person)),
-                body=str(item.get("message", "")),
+                body=normalize_message_body(str(item.get("message", ""))),
                 attachments=attachment_names,
                 attachment_data=attachment_data,
             )
@@ -566,7 +577,7 @@ def inbox_tab(records: list[MessageRecord], detail_cache: dict[str, MessageDetai
     st.markdown(f"**From:** {details.sender}  ")
     st.markdown(f"**To:** {details.recipient}  ")
     st.markdown(f"**Sent:** {_parse_iso_dt(details.sent_at)}")
-    st.markdown(details.body)
+    st.text(details.body)
 
     if details.attachments:
         st.markdown("**Attachments**")
