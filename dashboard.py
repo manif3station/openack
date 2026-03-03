@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import zipfile
 import json
 import base64
+import unicodedata
 import time
 from urllib.parse import quote
 from urllib.request import urlopen
@@ -115,7 +117,7 @@ def parse_message_text(text: str) -> MessageDetails:
         body_start = len(body_lines)
 
     body = "\n".join(body_lines[body_start:]).strip()
-    body = decode_escaped_newlines_if_json_string(body)
+    body = normalize_message_body(body)
 
     for line in footer_block.splitlines():
         stripped = line.strip()
@@ -138,6 +140,41 @@ def decode_escaped_newlines_if_json_string(body: str) -> str:
         return body
 
     return parsed
+
+
+def normalize_message_body(body: str) -> str:
+    normalized = decode_escaped_newlines_if_json_string(body)
+
+    # Some fetch providers send escaped newlines without JSON quoting.
+    # Convert those to actual line breaks for correct dashboard rendering.
+    if "\\n" in normalized and "\n" not in normalized:
+        normalized = normalized.replace("\\n", "\n")
+
+    return normalize_unreadable_symbols(normalized)
+
+
+def normalize_unreadable_symbols(text: str) -> str:
+    cleaned_chars: list[str] = []
+    for ch in text:
+        if ch == "\ufffd":
+            continue
+
+        category = unicodedata.category(ch)
+        if category.startswith("C") and ch not in {"\n", "\r", "\t"}:
+            continue
+
+        if category.startswith("S"):
+            continue
+
+        cleaned_chars.append(ch)
+
+    cleaned = "".join(cleaned_chars)
+    cleaned_lines = []
+    for line in cleaned.splitlines():
+        compact = re.sub(r"[ ]{2,}", " ", line).strip()
+        cleaned_lines.append(compact)
+
+    return "\n".join(cleaned_lines).strip()
 
 
 def _message_preview(text: str, limit: int = 80) -> str:
@@ -237,7 +274,7 @@ def fetch_new_messages_from_api() -> tuple[list[MessageRecord], dict[str, Messag
                 sent_at=str(item.get("sent_at", "")),
                 sender=str(item.get("from", "")),
                 recipient=str(item.get("to", person)),
-                body=str(item.get("message", "")),
+                body=normalize_message_body(str(item.get("message", ""))),
                 attachments=attachment_names,
                 attachment_data=attachment_data,
             )
@@ -566,7 +603,7 @@ def inbox_tab(records: list[MessageRecord], detail_cache: dict[str, MessageDetai
     st.markdown(f"**From:** {details.sender}  ")
     st.markdown(f"**To:** {details.recipient}  ")
     st.markdown(f"**Sent:** {_parse_iso_dt(details.sent_at)}")
-    st.markdown(details.body)
+    st.text(details.body)
 
     if details.attachments:
         st.markdown("**Attachments**")
