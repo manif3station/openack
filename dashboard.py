@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import zipfile
 import json
 import base64
+import unicodedata
 import time
 from urllib.parse import quote
 from urllib.request import urlopen
@@ -148,7 +150,31 @@ def normalize_message_body(body: str) -> str:
     if "\\n" in normalized and "\n" not in normalized:
         normalized = normalized.replace("\\n", "\n")
 
-    return normalized
+    return normalize_unreadable_symbols(normalized)
+
+
+def normalize_unreadable_symbols(text: str) -> str:
+    cleaned_chars: list[str] = []
+    for ch in text:
+        if ch == "\ufffd":
+            continue
+
+        category = unicodedata.category(ch)
+        if category.startswith("C") and ch not in {"\n", "\r", "\t"}:
+            continue
+
+        if category.startswith("S"):
+            continue
+
+        cleaned_chars.append(ch)
+
+    cleaned = "".join(cleaned_chars)
+    cleaned_lines = []
+    for line in cleaned.splitlines():
+        compact = re.sub(r"[ ]{2,}", " ", line).strip()
+        cleaned_lines.append(compact)
+
+    return "\n".join(cleaned_lines).strip()
 
 
 def _message_preview(text: str, limit: int = 80) -> str:

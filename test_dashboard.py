@@ -364,6 +364,19 @@ def test_scan_messages_decodes_fetch_message_escaped_newlines(tmp_path, monkeypa
     assert len(fetch_ids) == 1
     assert details[fetch_ids[0]].body == "UNDERSTOOD\nSLEEP WELL"
 
+
+
+def test_normalize_message_body_strips_unreadable_replacement_and_symbol_noise():
+    body = "���� UNDERSTOOD ��� SLEEP WELL\n\n��� Current: Loop running"
+
+    assert dashboard.normalize_message_body(body) == "UNDERSTOOD SLEEP WELL\n\nCurrent: Loop running"
+
+
+def test_normalize_unreadable_symbols_preserves_keyboard_text_and_punctuation():
+    text = "From: poly\nTo: michael\nStatus: OK!"
+
+    assert dashboard.normalize_unreadable_symbols(text) == text
+
 def test_require_login_does_not_allow_query_param_bypass(monkeypatch):
     class StopCalled(Exception):
         pass
