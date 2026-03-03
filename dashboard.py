@@ -57,7 +57,62 @@ def apply_ui_theme(theme_mode: str) -> None:
         <style>
           [data-testid="stToolbar"] { display: none !important; }
           button[title="Deploy this app"] { display: none !important; }
+
+          /* Prevent mobile auto-zoom on focus and keep manual pinch zoom enabled. */
+          html { -webkit-text-size-adjust: 100%; }
+          input, textarea, select,
+          [contenteditable="true"],
+          .stTextInput input,
+          .stTextArea textarea,
+          .stSelectbox div[data-baseweb="select"] input,
+          .stSelectbox input,
+          .stNumberInput input,
+          .stDateInput input,
+          .ql-editor {
+            font-size: 16px !important;
+          }
+
+          /* Do not let transient overlays block interaction. */
+          [data-testid*="stale"],
+          [data-testid*="overlay"],
+          .stale-element,
+          .stale-overlay {
+            pointer-events: none !important;
+          }
         </style>
+        <script>
+          (() => {
+            const setViewport = () => {
+              let viewport = document.querySelector('meta[name="viewport"]');
+              if (!viewport) {
+                viewport = document.createElement('meta');
+                viewport.name = 'viewport';
+                document.head.appendChild(viewport);
+              }
+              viewport.content = 'width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=yes';
+            };
+
+            const neutralizeBlockingOverlays = () => {
+              const selectors = [
+                '[data-testid*="stale"]',
+                '[data-testid*="overlay"]',
+                '.stale-element',
+                '.stale-overlay'
+              ];
+              document.querySelectorAll(selectors.join(',')).forEach((node) => {
+                node.style.pointerEvents = 'none';
+                node.style.background = 'transparent';
+              });
+            };
+
+            setViewport();
+            neutralizeBlockingOverlays();
+            new MutationObserver(() => {
+              setViewport();
+              neutralizeBlockingOverlays();
+            }).observe(document.documentElement, { childList: true, subtree: true });
+          })();
+        </script>
         """,
         unsafe_allow_html=True,
     )
@@ -830,14 +885,21 @@ def main() -> None:
     theme_mode = st.sidebar.selectbox("Theme", ["System", "Light", "Dark"], index=0)
     apply_ui_theme(theme_mode)
 
-    inbox_refresh_seconds = st.sidebar.slider(
-        "Inbox refresh every (seconds)",
-        min_value=0,
-        max_value=120,
-        value=15,
-        step=5,
-        help="Refreshes only the Inbox fragment over Streamlit's websocket without rerunning the entire page.",
+    live_refresh_enabled = st.sidebar.toggle(
+        "Enable live inbox auto-refresh",
+        value=False,
+        help="Off by default to avoid background refresh interruptions while typing on mobile.",
     )
+    inbox_refresh_seconds = 0
+    if live_refresh_enabled:
+        inbox_refresh_seconds = st.sidebar.slider(
+            "Inbox refresh every (seconds)",
+            min_value=5,
+            max_value=120,
+            value=15,
+            step=5,
+            help="Refreshes only the Inbox fragment over Streamlit's websocket.",
+        )
 
     people = ensure_admin_in_people()
     records, _ = scan_messages()
