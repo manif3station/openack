@@ -215,6 +215,86 @@ def test_delete_selected_messages_removes_inbox_and_done_files(tmp_path):
     assert not done_file.exists()
 
 
+def test_mark_message_as_read_moves_message_and_attachment_to_done_zip(tmp_path):
+    inbox = tmp_path / "bob" / "inbox"
+    inbox.mkdir(parents=True)
+    message = inbox / "2026-01-01T00:00:00Z-1.md"
+    attachment = inbox / "hello.txt"
+    attachment.write_text("hello", encoding="utf-8")
+    message.write_text(
+        f"""=== HEADER ===
+from: alice
+to: bob
+sent_at: 2026-01-01T00:00:00Z
+
+inbox body
+=== FOOTER ===
+attachments:
+- {attachment}
+""",
+        encoding="utf-8",
+    )
+
+    marked = dashboard.mark_message_as_read(f"inbox::{message}")
+
+    assert marked is True
+    assert not message.exists()
+    assert not attachment.exists()
+
+    done_zip = tmp_path / "bob" / "done" / "2026-01-01T00:00:00Z-1.zip"
+    assert done_zip.exists()
+    with zipfile.ZipFile(done_zip, "r") as archive:
+        assert sorted(archive.namelist()) == ["2026-01-01T00:00:00Z-1.md", "hello.txt"]
+
+
+def test_mark_selected_messages_as_read_marks_only_inbox_messages(tmp_path):
+    inbox = tmp_path / "alice" / "inbox"
+    done = tmp_path / "alice" / "done"
+    inbox.mkdir(parents=True)
+    done.mkdir(parents=True)
+
+    message = inbox / "message.md"
+    message.write_text(
+        """=== HEADER ===
+from: bob
+to: alice
+sent_at: 2026-01-01T00:00:00Z
+
+hello
+=== FOOTER ===
+""",
+        encoding="utf-8",
+    )
+
+    existing_done = done / "existing.zip"
+    existing_done.write_bytes(b"zip")
+
+    marked = dashboard.mark_selected_messages_as_read({f"inbox::{message}", f"done::{existing_done}::m.md"})
+
+    assert marked == 1
+
+
+def test_build_reply_body_formats_expected_quote_block():
+    details = dashboard.MessageDetails(
+        sent_at="2026-01-01T12:00:00Z",
+        sender="alice",
+        recipient="bob",
+        body="Something somewhere",
+        attachments=[],
+    )
+
+    result = dashboard.build_reply_body(details)
+
+    assert result == (
+        "\n\n"
+        "---\n"
+        "From: alice\n"
+        "To: bob\n"
+        "Date: 2026-01-01 12:00:00 UTC\n\n"
+        "Something somewhere"
+    )
+
+
 def test_selected_ids_visible_in_current_view_excludes_hidden_rows():
     visible = [
         dashboard.MessageRecord("1", "alice/inbox", True, "2026-01-01T00:00:00Z", "zoe", "alice", "z", 0),
